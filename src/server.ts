@@ -23,7 +23,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Authentication API routes
-app.use("/api/users", authRoutes);
+app.use("/api/auth", authRoutes);
 
 // Test route
 app.get("/", (req: Request, res: Response) => {
