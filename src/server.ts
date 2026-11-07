@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/database";
 import authRoutes from "./routes/authRoutes";
+import dashboardRoutes from "./routes/dashboardRoutes";
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // API routes
 app.use("/api/auth", authRoutes);
+app.use("/api/student", dashboardRoutes);
 
 // Test route
 app.get("/", (req: Request, res: Response) => {
