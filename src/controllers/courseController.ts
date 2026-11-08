@@ -1,7 +1,7 @@
 
 import { Request, Response } from "express";
 import mongoose from "mongoose";
-import Course from "../models/Course";
+import Course, { CourseLesson } from "../models/Course";
 import cloudinary from "../config/cloudinary";
 
 // Upload an image buffer to Cloudinary
@@ -44,23 +44,50 @@ const deleteCloudinaryImage = async (
   }
 };
 
-// Parse lessons if sent as JSON through FormData
-const parseLessons = (lessons: unknown): unknown[] => {
-  if (!lessons) return [];
+// Safely read Express route parameters
+const getParamString = (value: string | string[] | undefined): string => {
+  return typeof value === "string" ? value : "";
+};
 
-  if (Array.isArray(lessons)) return lessons;
+// Parse and validate lessons
+const parseLessons = (value: unknown): CourseLesson[] => {
+  if (!value) return [];
 
-  if (typeof lessons === "string") {
-    const parsed = JSON.parse(lessons);
+  let parsed: unknown = value;
 
-    if (!Array.isArray(parsed)) {
-      throw new Error("Lessons must be an array.");
-    }
-
-    return parsed;
+  if (typeof value === "string") {
+    parsed = JSON.parse(value);
   }
 
-  throw new Error("Invalid lessons format.");
+  if (!Array.isArray(parsed)) {
+    throw new Error("Lessons must be an array.");
+  }
+
+  return parsed.map((lesson: unknown): CourseLesson => {
+    if (
+      typeof lesson !== "object" ||
+      lesson === null ||
+      !("title" in lesson) ||
+      typeof lesson.title !== "string" ||
+      !lesson.title.trim()
+    ) {
+      throw new Error("Every lesson must have a valid title.");
+    }
+
+    const item = lesson as {
+      title: string;
+      description?: unknown;
+      videoUrl?: unknown;
+    };
+
+    return {
+      title: item.title.trim(),
+      description:
+        typeof item.description === "string" ? item.description : "",
+      videoUrl:
+        typeof item.videoUrl === "string" ? item.videoUrl : "",
+    };
+  });
 };
 
 // Parse boolean values sent through FormData
@@ -88,12 +115,18 @@ export const createCourse = async (
     } = req.body;
 
     if (
-      !title ||
-      !slug ||
-      !description ||
-      !category ||
-      !level ||
-      !duration
+      typeof title !== "string" ||
+      typeof slug !== "string" ||
+      typeof description !== "string" ||
+      typeof category !== "string" ||
+      typeof level !== "string" ||
+      typeof duration !== "string" ||
+      !title.trim() ||
+      !slug.trim() ||
+      !description.trim() ||
+      !category.trim() ||
+      !level.trim() ||
+      !duration.trim()
     ) {
       res.status(400).json({
         success: false,
@@ -121,7 +154,6 @@ export const createCourse = async (
     let image = "";
     let imagePublicId = "";
 
-    // Upload course image if provided
     if (req.file) {
       const uploadedImage = await uploadToCloudinary(req.file);
 
@@ -133,13 +165,16 @@ export const createCourse = async (
     const course = await Course.create({
       title: title.trim(),
       slug: normalizedSlug,
-      description,
-      category,
+      description: description.trim(),
+      category: category.trim(),
       level,
       image,
       imagePublicId,
-      instructor: instructor || "Decent Learning",
-      duration,
+      instructor:
+        typeof instructor === "string" && instructor.trim()
+          ? instructor.trim()
+          : "Decent Learning",
+      duration: duration.trim(),
       lessons,
       isPublished: parseBoolean(isPublished),
     });
@@ -150,14 +185,16 @@ export const createCourse = async (
       data: course,
     });
   } catch (error) {
-    // Remove uploaded image if course creation fails
     await deleteCloudinaryImage(uploadedPublicId);
 
     console.error("Create course error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Failed to create course.",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to create course.",
     });
   }
 };
@@ -196,7 +233,15 @@ export const getCourseBySlug = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { slug } = req.params;
+    const slug = getParamString(req.params.slug);
+
+    if (!slug) {
+      res.status(400).json({
+        success: false,
+        message: "A valid course slug is required.",
+      });
+      return;
+    }
 
     const course = await Course.findOne({
       slug: slug.toLowerCase(),
@@ -234,7 +279,7 @@ export const updateCourse = async (
   let uploadedPublicId = "";
 
   try {
-    const { id } = req.params;
+    const id = getParamString(req.params.id);
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       res.status(400).json({
@@ -254,22 +299,41 @@ export const updateCourse = async (
       return;
     }
 
-    const allowedFields = [
-      "title",
-      "description",
-      "category",
-      "level",
-      "instructor",
-      "duration",
-    ];
-
-    for (const field of allowedFields) {
-      if (req.body[field] !== undefined) {
-        (course as any)[field] = req.body[field];
-      }
+    // Update individual course fields
+    if (typeof req.body.title === "string") {
+      course.title = req.body.title.trim();
     }
 
+    if (typeof req.body.description === "string") {
+      course.description = req.body.description.trim();
+    }
+
+    if (typeof req.body.category === "string") {
+      course.category = req.body.category.trim();
+    }
+
+    if (typeof req.body.level === "string") {
+      course.level = req.body.level;
+    }
+
+    if (typeof req.body.instructor === "string") {
+      course.instructor = req.body.instructor.trim();
+    }
+
+    if (typeof req.body.duration === "string") {
+      course.duration = req.body.duration.trim();
+    }
+
+    // Update slug
     if (req.body.slug !== undefined) {
+      if (typeof req.body.slug !== "string" || !req.body.slug.trim()) {
+        res.status(400).json({
+          success: false,
+          message: "Please provide a valid course slug.",
+        });
+        return;
+      }
+
       const normalizedSlug = req.body.slug.toLowerCase().trim();
 
       const existingCourse = await Course.findOne({
@@ -288,15 +352,17 @@ export const updateCourse = async (
       course.slug = normalizedSlug;
     }
 
+    // Update lessons
     if (req.body.lessons !== undefined) {
-      course.lessons = parseLessons(req.body.lessons) as any;
+      course.set("lessons", parseLessons(req.body.lessons));
     }
 
+    // Update published status
     if (req.body.isPublished !== undefined) {
       course.isPublished = parseBoolean(req.body.isPublished);
     }
 
-    // Replace image if a new one was uploaded
+    // Keep the old image until the new image is saved successfully
     const oldPublicId = course.imagePublicId;
 
     if (req.file) {
@@ -310,7 +376,7 @@ export const updateCourse = async (
 
     await course.save();
 
-    // Delete old image only after successful database update
+    // Delete old image after successful database update
     if (req.file && oldPublicId) {
       await deleteCloudinaryImage(oldPublicId);
     }
@@ -321,14 +387,16 @@ export const updateCourse = async (
       data: course,
     });
   } catch (error) {
-    // Clean up new upload if database update fails
     await deleteCloudinaryImage(uploadedPublicId);
 
     console.error("Update course error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Failed to update course.",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Failed to update course.",
     });
   }
 };
@@ -339,7 +407,7 @@ export const deleteCourse = async (
   res: Response
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const id = getParamString(req.params.id);
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       res.status(400).json({
@@ -361,7 +429,6 @@ export const deleteCourse = async (
 
     await course.deleteOne();
 
-    // Delete associated Cloudinary image
     await deleteCloudinaryImage(course.imagePublicId);
 
     res.status(200).json({
