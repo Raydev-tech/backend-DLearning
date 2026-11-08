@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import connectDB from "./config/database";
 import authRoutes from "./routes/authRoutes";
 import dashboardRoutes from "./routes/dashboardRoutes";
+import courseRoutes from "./routes/courseRoutes";
 
 dotenv.config();
 
@@ -14,7 +15,7 @@ const PORT = Number(process.env.PORT) || 5000;
 // Middleware
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:3000",
+    origin: process.env.CLIENT_URL || "https://decent-learning.vercel.app",
     credentials: true,
   })
 );
@@ -25,6 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 // API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/student", dashboardRoutes);
+app.use("/api/courses", courseRoutes);
 
 // Test route
 app.get("/", (req: Request, res: Response) => {
